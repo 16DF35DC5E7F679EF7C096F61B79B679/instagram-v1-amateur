@@ -108,7 +108,7 @@ func (server *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	respondWithJson(w, createSuccessfulResponse("Successfully created user", responseDTO), http.StatusAccepted)
 }
 
-func (server *Server) singIn(w http.ResponseWriter, r *http.Request) {
+func (server *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	var signInRequestDTO user.SignInRequestDTO
 	err := json.NewDecoder(r.Body).Decode(&signInRequestDTO)
 	if err != nil {
@@ -138,6 +138,38 @@ func (server *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondWithJson(w, createSuccessfulResponse("Successfully registered device", registerDeviceResponseDTO), http.StatusOK)
+}
+
+func (server *Server) signOut(w http.ResponseWriter, r *http.Request) {
+	var invalidateSessionRequestDTO user_session.InvalidateSessionRequestDTO
+	err := json.NewDecoder(r.Body).Decode(&invalidateSessionRequestDTO)
+	if err != nil {
+		respondWithJson(w, createBadRequestResponse("Please supply a valid body: Errors:\n" + err.Error()), http.StatusBadRequest)
+		return
+	}
+	err = user_session.InvalidateSession(context.Background(), server.MongoClient, &invalidateSessionRequestDTO)
+	if err != nil {
+		fmt.Printf("Error in invalidating sessions: %e ", err)
+		respondWithJson(w, createSuccessfulResponse("Error occurred in singing out", ""), http.StatusInternalServerError)
+		return
+	}
+	respondWithJson(w, createSuccessfulResponse("Successfully signed out", ""), http.StatusOK)
+}
+
+func (server *Server) getAllActiveSessions(w http.ResponseWriter, r *http.Request) {
+	handle, err := extractFromRequestURL(r, "handle")
+	if err != nil {
+		fmt.Printf("[getAllActiveSessions]Error in extracting handle from request %e ", err)
+		respondWithJson(w, createBadRequestResponse("Please provide a valid handle"), http.StatusBadRequest)
+		return
+	}
+	allActiveSessions, err := user_session.GetAllActiveSessions(context.Background(), server.MongoClient, handle)
+	if err != nil {
+		fmt.Printf("Error in fetching active sessoins for handle %s %e ", handle, err)
+		respondWithJson(w, createBadRequestResponse(err.Error()), http.StatusBadRequest)
+		return
+	}
+	respondWithJson(w, createSuccessfulResponse("Successfully fetched active sessions", allActiveSessions), http.StatusOK)
 }
 
 func createSessionCreationDTOForSignIn(dto user.SignInRequestDTO) *user_session.CreateSessionRequestDTO {

@@ -19,7 +19,7 @@ type Session struct {
 type Device struct {
 	Id primitive.ObjectID `json:"id" bson:"_id"`
 	DeviceName string `json:"device_name" bson:"device_name"`
-	DeviceIP string `json:"device_ip" bson:"device_id"`
+	DeviceIP string `json:"device_ip" bson:"device_ip"`
 	CreatedAt int64 `json:"started_at" bson:"created_at"`
 	UpdatedAt int64 `json:"updated_at" bson:"updated_at"`
 	DeletedAt int64 `json:"deleted_at" bson:"deleted_at, omitempty"`

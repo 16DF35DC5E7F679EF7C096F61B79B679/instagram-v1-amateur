@@ -1,6 +1,8 @@
 package user_session
 
 import (
+	"com.harsha/go-practices/instagram-v1/user"
+	"com.harsha/go-practices/instagram-v1/utility"
 	"context"
 	"fmt"
 	"go.mongodb.org/mongo-driver/bson"
@@ -18,13 +20,75 @@ func CreateSession(ctx context.Context, mongoClient *mongo.Client, createSession
 	}
 	newCtx, cancelFunc := context.WithTimeout(ctx, time.Second * 10)
 	defer cancelFunc()
-	invalidateOtherSessionsInTheDeviceAndBrowser(ctx, mongoClient, createSessionRequestDTO)
+	invalidateOtherSessionsInTheDeviceAndBrowser(ctx, mongoClient, createSessionRequestDTO.Handle, createSessionRequestDTO.DeviceId, createSessionRequestDTO.BrowserType)
 	collection := mongoClient.Database("instagram-v1").Collection("session")
 	sessionCreationResult, err := collection.InsertOne(newCtx, session)
 	if err != nil {
 		return nil, err
 	}
 	return createSessionResponseDTO(session, sessionCreationResult.InsertedID.(primitive.ObjectID)), nil
+}
+
+func InvalidateSession(ctx context.Context, client *mongo.Client, invalidateSessionRequestDTO *InvalidateSessionRequestDTO) error {
+	invalidateOtherSessionsInTheDeviceAndBrowser(ctx, client, invalidateSessionRequestDTO.Handle, invalidateSessionRequestDTO.DeviceId, invalidateSessionRequestDTO.BrowserType)
+	return nil
+}
+
+func GetAllActiveSessions(ctx context.Context, client *mongo.Client, handle string) (*AllActiveSessionsResponseDTO, error) {
+	err := validateHandle(ctx, client, handle)
+	if err != nil {
+		return nil, fmt.Errorf("Non-existent handle: %s ", handle)
+	}
+	filter := &bson.M{
+		"handle" : handle,
+		"active_till" : &bson.M{"$gte":time.Now().Unix()},
+	}
+	newCtx, cancelFunc := context.WithTimeout(ctx, time.Second * 10)
+	defer cancelFunc()
+	sessionCollection := client.Database("instagram-v1").Collection("session")
+	cursor, err := sessionCollection.Find(newCtx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("Unknown Error Occurred %e ", err)
+	}
+	var activeSessions []Session
+	for cursor.Next(context.TODO()) {
+		var activeSession Session
+		err := cursor.Decode(&activeSession)
+		if err != nil {
+			log.Fatal(err)
+		}
+		activeSessions = append(activeSessions, activeSession)
+	}
+	return convertToAllActiveSessionsResponseDTO(handle, activeSessions), nil
+}
+
+func convertToAllActiveSessionsResponseDTO(handle string, sessions []Session) *AllActiveSessionsResponseDTO {
+	var activeSessionResponses []*ActiveSessionResponseDTO
+	for _, session := range sessions {
+		activeSessionResponses = append(activeSessionResponses,
+			&ActiveSessionResponseDTO{
+				SessionId:     session.Id.Hex(),
+				DeviceId:      session.DeviceId,
+				BrowserType:   session.BrowserType,
+				LoggedInSince: utility.GetHumanReadableTime(session.CreatedAt),
+				ExpiresOn:     utility.GetHumanReadableTime(session.ActiveTill),
+			})
+	}
+	return &AllActiveSessionsResponseDTO{
+		Handle:         handle,
+		ActiveSessions: activeSessionResponses,
+	}
+}
+
+func validateHandle(ctx context.Context, client *mongo.Client, handle string) error {
+	userByHandle, err := user.GetUserByHandle(ctx, client, handle)
+	if err != nil {
+		return err
+	}
+	if userByHandle == nil {
+		return fmt.Errorf("Invalid Handle: %s ", handle)
+	}
+	return nil
 }
 
 func validateAndCreateSession(ctx context.Context, client *mongo.Client, dto *CreateSessionRequestDTO) (*Session, error) {
@@ -85,12 +149,12 @@ func createSessionResponseDTO(session *Session, id primitive.ObjectID) *SessionR
 	return &SessionResponseDTO{Id: id.Hex(), Handle: session.Handle, SessionToken: session.SessionToken, ActiveTill: session.ActiveTill}
 }
 
-func invalidateOtherSessionsInTheDeviceAndBrowser(ctx context.Context, client *mongo.Client, dto *CreateSessionRequestDTO) {
+func invalidateOtherSessionsInTheDeviceAndBrowser(ctx context.Context, client *mongo.Client, handle, deviceId, browserType string) {
 	collection := client.Database("instagram-v1").Collection("session")
 	filterToBeFindCurrentlyActiveSessionsInTheSameDeviceAndBrowser := &bson.M{
-		"handle" : dto.Handle,
-		"device_id" : dto.DeviceId,
-		"browser_type" : dto.BrowserType,
+		"handle" : handle,
+		"device_id" : deviceId,
+		"browser_type" : browserType,
 		"active_till" : bson.M{
 			"$gte" : time.Now().Unix(),
 		},
@@ -109,25 +173,7 @@ func invalidateOtherSessionsInTheDeviceAndBrowser(ctx context.Context, client *m
 		log.Fatal(err)
 	}
 	fmt.Printf("Number of sessions invalidated: %d ", invalidateSessionsResult.MatchedCount)
-	//cursor, err := collection.Find(newCtx, filter)
-	//if err != nil {
-	//	fmt.Println("Couldn't find existing sessions in database")
-	//	return
-	//}
-	//for cursor.Next(context.TODO()) {
-	//	var activeSession Session
-	//	err := cursor.Decode(&activeSession)
-	//	if err != nil {
-	//		log.Fatal(err)
-	//	}
-	//	activeSession.ActiveTill = time.Now().Unix()
-	//	go updateSession(newCtx, collection, activeSession)
-	//}
 }
-
-//func invalidateSession(ctx context.Context, sessionCollection *mongo.Collection, session Session) {
-//	sessionCollection.UpdateOne(context.TODO(), bson.M{"_id": session.Id}, )
-//}
 
 func verifyPassword(ctx context.Context, client *mongo.Client, handle string, passwordText string) error {
 	passwordMatchingFilter := &bson.M{
